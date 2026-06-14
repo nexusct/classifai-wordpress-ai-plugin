@@ -51,7 +51,7 @@ repos:
           # Google Maps API key pattern (any AIza... key that is NOT in a .example.* file)
           if git diff --cached --name-only | grep -vE "\.(example|template)\." | \
              xargs -I{} git diff --cached -- {} 2>/dev/null | grep -qE "AIza[0-9A-Za-z_-]{35}"; then
-            echo "❌ BLOCKED: commit contains a Google API key. Move to env var / config.local.js."
+            echo "❌ BLOCKED: commit contains a Google API key. Move to an environment variable or gitignored runtime config."
             FAIL=1
           fi
           # AWS access keys
