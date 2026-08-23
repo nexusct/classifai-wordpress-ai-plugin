@@ -1,0 +1,242 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly on Mondays at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  secret-scanning:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  dependency-scanning:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+        if: hashFiles('package-lock.json') != ''
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "No package-lock.json found, skipping npm install"
+          fi
+
+      - name: Run npm audit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm audit --audit-level=moderate || true
+          else
+            echo "No package-lock.json found, skipping npm audit"
+          fi
+        continue-on-error: true
+
+      - name: Check for Composer
+        id: composer-check
+        run: |
+          if [ -f composer.json ]; then
+            echo "has_composer=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_composer=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up PHP
+        if: steps.composer-check.outputs.has_composer == 'true'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer
+          coverage: none
+
+      - name: Install Composer dependencies
+        if: steps.composer-check.outputs.has_composer == 'true'
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run Composer audit
+        if: steps.composer-check.outputs.has_composer == 'true'
+        run: composer audit || true
+        continue-on-error: true
+
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript', 'typescript' ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+
+  security-hardening-check:
+    name: Security Hardening Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for .env.example
+        run: |
+          if [ ! -f .env.example ]; then
+            echo "⚠️  WARNING: .env.example file is missing"
+            exit 1
+          fi
+
+      - name: Check for SECURITY.md
+        run: |
+          if [ ! -f SECURITY.md ]; then
+            echo "⚠️  WARNING: SECURITY.md file is missing"
+            exit 1
+          fi
+
+      - name: Check .gitignore for secrets
+        run: |
+          REQUIRED_PATTERNS=(".env" "*.pem" "*.key" "secrets/" "credentials/")
+          MISSING=()
+          for pattern in "${REQUIRED_PATTERNS[@]}"; do
+            if ! grep -q "$pattern" .gitignore 2>/dev/null; then
+              MISSING+=("$pattern")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "⚠️  WARNING: .gitignore is missing patterns: ${MISSING[*]}"
+            exit 1
+          fi
+
+      - name: Check for hardcoded secrets (basic patterns)
+        run: |
+          # Check for common secret patterns (excluding .env.example and test fixtures)
+          if git grep -E "AIza[0-9A-Za-z_-]{35}" -- ':!.env.example' ':!tests/' ':!*.md' ':!.pre-commit-config.yaml'; then
+            echo "❌ Found potential Google API key"
+            exit 1
+          fi
+          if git grep -E "AKIA[0-9A-Z]{16}" -- ':!.env.example' ':!tests/' ':!*.md'; then
+            echo "❌ Found potential AWS access key"
+            exit 1
+          fi
+          if git grep -E "sk-[a-zA-Z0-9]{20,}" -- ':!.env.example' ':!tests/' ':!*.md'; then
+            echo "❌ Found potential OpenAI API key"
+            exit 1
+          fi
+          echo "✅ No obvious hardcoded secrets found"
+
+  wordpress-security:
+    name: WordPress Security Best Practices
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for PHP files
+        id: php-check
+        run: |
+          if find . -name "*.php" -type f | grep -q .; then
+            echo "has_php=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_php=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install PHP_CodeSniffer with WordPress standards
+        if: steps.php-check.outputs.has_php == 'true'
+        run: |
+          composer global require --dev wp-coding-standards/wpcs:"^3.0"
+          composer global require --dev phpcompatibility/phpcompatibility-wp:"*"
+          composer global require --dev automattic/vipwpcs
+          phpcs --config-set installed_paths \
+            ~/.composer/vendor/wp-coding-standards/wpcs,\
+~/.composer/vendor/phpcompatibility/phpcompatibility-wp,\
+~/.composer/vendor/automattic/vipwpcs
+
+      - name: Run WordPress security checks
+        if: steps.php-check.outputs.has_php == 'true'
+        run: |
+          # Check for SQL injection vulnerabilities
+          echo "Checking for potential SQL injection..."
+          find . -name "*.php" -exec grep -l "wpdb->query\|wpdb->get_" {} \; | \
+            xargs grep -n "wpdb" | grep -v "prepare" | grep -v "//.*wpdb" || true
+
+          # Check for XSS vulnerabilities
+          echo "Checking for potential XSS..."
+          find . -name "*.php" -exec grep -l "echo.*\$_" {} \; | \
+            xargs grep -n "echo.*\$_" | grep -v "esc_html\|esc_attr\|esc_url" || true
+
+          # Check for eval() usage
+          echo "Checking for eval() usage..."
+          find . -name "*.php" -exec grep -n "eval(" {} + || true
+        continue-on-error: true
+
+  summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, dependency-scanning, codeql-analysis, security-hardening-check, wordpress-security]
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "Security scan results:"
+          echo "- Secret Scanning: ${{ needs.secret-scanning.result }}"
+          echo "- Dependency Scanning: ${{ needs.dependency-scanning.result }}"
+          echo "- CodeQL Analysis: ${{ needs.codeql-analysis.result }}"
+          echo "- Security Hardening: ${{ needs.security-hardening-check.result }}"
+          echo "- WordPress Security: ${{ needs.wordpress-security.result }}"
+
+      - name: Overall status
+        run: |
+          if [[ "${{ needs.secret-scanning.result }}" == "failure" ]] || \
+             [[ "${{ needs.security-hardening-check.result }}" == "failure" ]]; then
+            echo "❌ Security scan failed!"
+            exit 1
+          else
+            echo "✅ Security scan passed!"
+          fi
