@@ -95,9 +95,23 @@ Thumbs.db
 *~
 .ipynb_checkpoints/
 
+# ---- Security scanning results (except baseline) ----
+gitleaks-report.json
+detect-secrets-results.json
+security-scan-*.txt
+!.secrets.baseline
+
 # ---- Misc ----
 .tmp/
 tmp/
 temp/
 coverage/
 .nyc_output/
+
+# ---- WordPress specific ----
+wp-config.php
+wp-config-local.php
+.htaccess
+.htpasswd
+error_log
+debug.log

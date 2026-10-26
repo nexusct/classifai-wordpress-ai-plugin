@@ -79,4 +79,73 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
       - id: trailing-whitespace
+        exclude: '\.min\.(js|css)$'
       - id: end-of-file-fixer
+        exclude: '\.min\.(js|css)$'
+      - id: check-json
+        exclude: 'package-lock\.json'
+      - id: check-yaml
+        args: ['--safe']
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # ---- Additional security patterns ----
+  - repo: local
+    hooks:
+      - id: check-no-sql-injection-patterns
+        name: Check for potential SQL injection patterns
+        entry: |
+          bash -c '
+          # Only check PHP files for SQL injection patterns
+          FAIL=0
+          if git diff --cached --name-only --diff-filter=ACM | grep -qE "\.php$"; then
+            # Check for unescaped $_GET/$_POST in SQL queries
+            if git diff --cached --diff-filter=ACM | grep -E "\.php$" | xargs -I{} git diff --cached -- {} 2>/dev/null | grep -E "query.*(\\\$_GET|\\\$_POST)" | grep -v "esc_sql\|prepare\|wpdb->prepare"; then
+              echo "⚠️  WARNING: Potential SQL injection risk detected. Use \$wpdb->prepare() for all dynamic queries."
+              FAIL=1
+            fi
+          fi
+          exit $FAIL
+          '
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: check-wordpress-nonce-usage
+        name: Check WordPress AJAX handlers have nonce verification
+        entry: |
+          bash -c '
+          # Check PHP files for AJAX handlers without nonce checks
+          FAIL=0
+          if git diff --cached --name-only --diff-filter=ACM | grep -qE "\.php$"; then
+            # Look for wp_ajax_ hooks without check_ajax_referer nearby
+            if git diff --cached --diff-filter=ACM | grep -E "\.php$" | xargs -I{} git diff --cached -- {} 2>/dev/null | grep -E "add_action.*wp_ajax_" | head -5 | while read line; do
+              echo "ℹ️  INFO: Found AJAX handler. Ensure check_ajax_referer() or wp_verify_nonce() is used."
+            done
+          fi
+          exit 0
+          '
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: check-sensitive-data-patterns
+        name: Check for potential PII or sensitive data
+        entry: |
+          bash -c '
+          FAIL=0
+          # Check for patterns that might indicate PII
+          if git diff --cached | grep -iE "(ssn|social.security|credit.card|password.*=|passwd.*=)" | grep -v "password_hash\|wp_hash_password"; then
+            echo "⚠️  WARNING: Potential sensitive data (SSN, credit card, password) detected in commit."
+            FAIL=1
+          fi
+          # Check for email addresses that aren'\''t examples
+          if git diff --cached | grep -E "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" | grep -vE "(example\.com|test\.com|localhost|@users\.noreply\.github\.com)"; then
+            echo "ℹ️  INFO: Real email addresses detected. Ensure they are not PII."
+          fi
+          exit $FAIL
+          '
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
