@@ -2,7 +2,7 @@
 
 This repository is maintained by **Nexus Communications Technology** (Nexuscomm LLC).
 
-## Reporting a security issue
+## Reporting a Security Issue
 
 If you discover a security vulnerability, **do not** open a public issue.
 
@@ -10,158 +10,243 @@ Instead, email **office@nexusct.com** with:
 - A description of the vulnerability
 - Steps to reproduce (if applicable)
 - The commit/branch where you observed it
-- Your assessment of severity (if applicable)
+- Your suggested remediation (if any)
 
-We will acknowledge within 2 business days and provide a timeline for remediation.
+We will acknowledge receipt within 2 business days and provide a timeline for remediation.
 
-## What belongs in this repo
+## What Should Never Be Committed
 
-**Never commit:**
-- Passwords, API keys, tokens, private keys, certificates
+**Never commit these to any repository:**
+- Passwords, API keys, tokens, OAuth secrets
+- Private keys, certificates, keystores
 - Internal pricing data, dealer costs, margin percentages
 - Customer PII (Personally Identifiable Information) or PHI (Protected Health Information)
-- Internal network addresses or credentials
+- Internal network addresses, VPN credentials, or infrastructure details
+- Database connection strings with credentials
 - Database dumps or backups containing real data
-- Session tokens, OAuth tokens, or JWT secrets
-- Encryption keys or initialization vectors
+- Cloud provider credentials (AWS, Azure, GCP)
 
-Use environment variables, `.env` files (gitignored), or a secure runtime
-config endpoint — never hardcode secrets.
+**Always use:**
+- Environment variables (via `.env` files that are gitignored)
+- WordPress constants in `wp-config.php` (never committed)
+- Gitignored runtime config files (e.g., `config.local.js`)
+- Secret management services (AWS Secrets Manager, Azure Key Vault, etc.)
 
-## Security best practices
+## Pre-commit Hooks
 
-### Environment variables
-- Copy `.env.example` to `.env` and fill in your values
-- NEVER commit `.env` to git (it's in `.gitignore`)
-- Use different API keys for dev/staging/production
-- Rotate keys immediately if accidentally exposed
+This repository uses [pre-commit](https://pre-commit.com/) with multiple security layers:
 
-### WordPress-specific security
-- Always use `$wpdb->prepare()` for database queries with user input
-- Verify nonces with `wp_verify_nonce()` for all form submissions
-- Escape output with `esc_html()`, `esc_attr()`, or `esc_url()`
-- Never use `eval()` - it's dangerous and banned in WordPress plugins
-- Check user capabilities with `current_user_can()` before privileged operations
-- Sanitize input with `sanitize_text_field()`, `sanitize_email()`, etc.
+### Security Tools
+- **`gitleaks`** — Industry-standard secret detection
+- **`detect-secrets`** — Secondary scanner with baseline tracking
+- **Nexus-specific pattern blocks** — Custom rules for known-bad strings
 
-### API security
-- Enable rate limiting on all AI/ML provider APIs
-- Monitor API usage for unusual patterns
-- Set spending limits on paid services (OpenAI, Google Cloud, etc.)
-- Enable MFA on all provider accounts
-- Review and revoke unused API keys regularly
-
-## Pre-commit hooks
-
-This repo uses [pre-commit](https://pre-commit.com/) with multiple security layers:
-- `gitleaks` (v8.30.1) — detects committed secrets
-- `detect-secrets` (v1.5.0) — second-layer scanner
-- Nexus-specific pattern blocks — rejects known-bad strings
-- WordPress security checks — SQL injection, XSS, nonce verification
-- File hygiene checks — YAML/JSON validation, merge conflicts, etc.
-
-**Setup (one-time per clone):**
+### Setup (One-time per clone)
 
 ```bash
+# Install pre-commit framework
 pip install pre-commit
+
+# Install hooks in your local repository
 pre-commit install
+
+# Verify installation
+pre-commit run --all-files
 ```
 
-Hooks will run automatically on every commit.
+Hooks will run automatically on every commit. If a secret is detected, the commit will be blocked with a descriptive error message.
 
-**Manual scan:**
+### Manual Scanning
+
+Before important pushes or releases:
+
 ```bash
 pre-commit run --all-files
 ```
 
-## GitHub Actions security scanning
+### Bypassing Hooks (NOT RECOMMENDED)
 
-This repository includes automated security scanning via GitHub Actions:
-- **Secret scanning** - Gitleaks on every push
-- **Dependency scanning** - npm/composer audit for vulnerable packages
-- **CodeQL analysis** - Static analysis for security vulnerabilities
-- **Security hardening checks** - Validates .env.example, SECURITY.md, .gitignore
-- **WordPress security** - PHP_CodeSniffer with WordPress security standards
+Only bypass hooks for documented false positives:
 
-The workflow runs on:
-- Every push to main/develop
-- Every pull request
-- Weekly scheduled scans (Mondays at 9am UTC)
-- Manual trigger via GitHub Actions UI
+```bash
+git commit --no-verify -m "your message"
+```
 
-## Incident history
+**⚠️ Warning:** Document why you bypassed hooks in your commit message.
 
-### 2026-04-19 — Credential exposure incident (NCT-SEC-2026-04-19-001)
+## Security Incident History
 
-**What happened:**
-A Google Maps API key (`AIzaSyAd72xUaF049-dbkwTAfSvsjQhmp9YLDpk`) was accidentally committed to the repository in commit `93ede1f` within the `.pre-commit-config.yaml` file as part of a security check pattern.
+### NCT-SEC-2026-04-19-001 (April 19, 2026)
 
-**Impact:**
-- Key was exposed in public repository
-- Key was valid at time of exposure
-- No evidence of unauthorized usage detected
+**Incident:** A Google Maps API key was inadvertently committed to the repository in a security configuration file.
 
-**Remediation:**
-1. Key was rotated on 2026-04-19 (same day as discovery)
-2. Hardcoded key reference removed from `.pre-commit-config.yaml` in commit `b428e04`
-3. Generic pattern detection (`AIza[0-9A-Za-z_-]{35}`) remains active
-4. Enhanced pre-commit hooks to prevent future occurrences
-5. Added GitHub Actions security scanning workflow
+**Immediate Response:**
+- Google Maps API key rotated immediately
+- Admin password changed (was referenced in commit message)
+- All team members notified
+- Repository audited for additional exposures
 
-**Current status:** RESOLVED
-- Old key is revoked and non-functional
-- New key is stored securely in environment variables
-- Git history still contains the old key (intentional - see below)
+**Preventive Measures Implemented:**
+- Comprehensive `.gitignore` template deployed across all repositories
+- Pre-commit hooks with `gitleaks` and `detect-secrets` made mandatory
+- Custom pattern blocks added for known-bad strings and patterns
+- Security policy documented and distributed
+- Team training on secure credential management
 
-**Why git history was not rewritten:**
-1. Key was already rotated and is no longer valid
-2. Risk of disrupting collaborators and CI/CD pipelines
-3. Industry standard practice: rotate first, history rewriting is optional
-4. Transparency: keeping the incident visible serves as a reminder and learning opportunity
+**Lessons Learned:**
+- Even security configuration files can expose secrets
+- Pre-commit hooks must be installed immediately after cloning
+- API keys should never appear in any file, even as "examples"
+- Git history is permanent; rotate credentials immediately if exposed
 
-**Lessons learned:**
-1. Never embed secrets in config files, even for validation purposes
-2. Use regex patterns without specific key values
-3. Regular automated scanning catches issues early
-4. Fast rotation minimizes exposure window
+### NCT-SEC-2026-07-29 (July 29, 2026)
 
-### Other security incidents
-- 2026-04-19 — Admin password also rotated as precautionary measure
+**Incident:** Secondary review discovered that the `.pre-commit-config.yaml` file itself contained the rotated API key as a grep literal for blocking purposes, creating an ironic situation where the security tool embedded the secret it was meant to prevent.
+
+**Specific Issue:**
+```yaml
+# This check inadvertently embedded the key in the repository
+if git diff --cached | grep -q "AIzaSyAd72xUaF049-dbkwTAfSvsjQhmp9YLDpk"; then
+  echo "❌ BLOCKED: commit contains the live rotated Google Maps key..."
+  FAIL=1
+fi
+```
+
+**Resolution:**
+- Removed the specific API key literal from `.pre-commit-config.yaml`
+- Generic AIza pattern detection (`AIza[0-9A-Za-z_-]{35}`) already provided adequate coverage
+- Updated error messages to be more generic and not reference specific paths
+- No additional key rotation needed (key was already rotated in April)
+
+**Lessons Learned:**
+- Security tooling must be reviewed for embedded secrets
+- Generic pattern matching is preferable to specific literal values
+- Defense in depth: multiple pattern checks catch edge cases
+
+## Git History Disclosure
+
+⚠️ **Important Notice:** The Google Maps API key `AIzaSyAd72xUaF049-dbkwTAfSvsjQhmp9YLDpk` exists in this repository's git history (commit `93ede1f` from 2026-04-19).
+
+**Current Status:**
+- ✅ Key has been **rotated and is no longer valid**
+- ✅ Key cannot be used to access any services
+- ✅ Removed from all current files (as of commit `b428e04`)
+- ❌ Remains in git history (commits are immutable)
+
+**Why Not Rewrite History?**
+
+While tools like `git filter-branch` or `BFG Repo-Cleaner` can remove content from git history, doing so would require:
+
+1. Force-pushing to rewrite all commit hashes
+2. All team members and CI/CD systems re-cloning the repository
+3. Breaking any references to old commits (PRs, issues, external documentation)
+4. Coordinating across all forks and clones
+5. Potential data loss if anyone has unpushed commits
+
+**Risk Assessment:**
+
+Since the key has been rotated and is invalid, the risk of keeping it in history is **minimal** compared to the disruption of rewriting history. This is a documented best practice: **rotate first, consider history rewriting only if necessary**.
+
+**This serves as a permanent reminder:** Once something is committed to git, it's effectively permanent. Always use pre-commit hooks and never commit secrets.
+
+## Best Practices
+
+### For Developers
+
+1. **Install pre-commit hooks immediately** after cloning any repository
+2. **Never commit secrets** — use environment variables or gitignored files
+3. **Review hook output** — if a commit is blocked, investigate and fix the issue
+4. **Rotate immediately** — if a secret is accidentally committed, rotate it before anything else
+5. **Report incidents** — email `office@nexusct.com` with full details
+6. **Use `.example` files** — for configuration templates, use `.example` or `.template` suffixes
+
+### For API Keys and Credentials
+
+#### Environment Variables (Recommended)
+
+```bash
+# .env (gitignored)
+GOOGLE_MAPS_API_KEY=your-key-here
+OPENAI_API_KEY=your-key-here
+DATABASE_URL=postgres://user:pass@localhost/db
+```
+
+#### WordPress Constants
+
+```php
+// wp-config.php (never committed to public repos)
+define('CLASSIFAI_GOOGLE_API_KEY', getenv('GOOGLE_MAPS_API_KEY'));
+define('CLASSIFAI_OPENAI_KEY', getenv('OPENAI_API_KEY'));
+
+// In plugin code
+$api_key = defined('CLASSIFAI_GOOGLE_API_KEY') ? CLASSIFAI_GOOGLE_API_KEY : '';
+if (empty($api_key)) {
+    wp_die('API key not configured. Please set CLASSIFAI_GOOGLE_API_KEY in wp-config.php');
+}
+```
+
+#### Gitignored Config Files
+
+```javascript
+// config.local.js (gitignored)
+module.exports = {
+    googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+};
+```
+
+### For Configuration Examples
+
+When creating example configurations:
+
+```javascript
+// config.example.js (committed)
+module.exports = {
+    // Get your API key from https://console.cloud.google.com
+    googleMapsApiKey: 'PASTE_YOUR_GOOGLE_MAPS_API_KEY_HERE',
+    
+    // Get your API key from https://platform.openai.com
+    openaiApiKey: 'PASTE_YOUR_OPENAI_API_KEY_HERE',
+};
+```
+
+**Key points:**
+- Use placeholder text like `PASTE_YOUR_API_KEY_HERE`
+- Never use real API keys, even expired ones
+- Name files with `.example` or `.template` extensions
+- Include comments with links to where users can obtain keys
+
+## Automated Security Checks
+
+This repository includes checks for:
+
+- ✅ Google API keys (AIza... pattern)
+- ✅ AWS access keys (AKIA... pattern)
+- ✅ Private keys (BEGIN PRIVATE KEY, BEGIN RSA PRIVATE KEY, etc.)
+- ✅ Known compromised credentials (nexus2026 password)
+- ✅ Internal pricing constants (MARGIN = 0.25)
+- ✅ Large files (>5MB) that might contain secrets
+- ✅ Merge conflict markers
+- ✅ Trailing whitespace and file endings
 
 ## Compliance
 
-This project follows security standards from:
-- **OWASP Top 10 (2021)** - Web application security risks
-- **WordPress Security Best Practices** - Official WordPress.org guidelines
-- **GDPR** - No PII stored in repository
-- **GitHub Secret Scanning** - Automated detection enabled
-- **CWE Top 25** - Common Weakness Enumeration
+Nexus Communications Technology repositories must comply with:
 
-## Security tools and resources
+- **GDPR** — No personal data in repositories
+- **HIPAA** — No PHI in repositories (for healthcare projects)
+- **PCI DSS** — No payment card data in repositories
+- **SOC 2** — Audit trail of all security incidents
 
-### Detection tools
-- [Gitleaks](https://github.com/gitleaks/gitleaks) - Secret scanning
-- [detect-secrets](https://github.com/Yelp/detect-secrets) - Baseline secret detection
-- [GitHub Secret Scanning](https://docs.github.com/en/code-security/secret-scanning) - Platform-level detection
+## Additional Resources
 
-### WordPress security
-- [WordPress Security White Paper](https://wordpress.org/about/security/)
-- [Plugin Security Handbook](https://developer.wordpress.org/plugins/security/)
-- [WPScan](https://wpscan.com/) - WordPress vulnerability database
-
-### AI/ML API security
-- [OpenAI API Best Practices](https://platform.openai.com/docs/guides/safety-best-practices)
-- [Google Cloud Security](https://cloud.google.com/security/best-practices)
-- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)
+- [OWASP Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)
+- [GitHub Secret Scanning](https://docs.github.com/en/code-security/secret-scanning/about-secret-scanning)
+- [WordPress Security Best Practices](https://developer.wordpress.org/plugins/security/)
+- [Pre-commit Framework Documentation](https://pre-commit.com/)
 
 ## Contact
 
-**Security issues:** office@nexusct.com  
-**General inquiries:** Jim Mazza (jim.mazza@nexusct.com)
-
-## Review schedule
-
-- **Pre-commit hooks:** Updated as new versions release
-- **Dependency audit:** Weekly automated scans via GitHub Actions
-- **Manual security review:** Quarterly (every 90 days)
-- **Next scheduled review:** Check GitHub Actions for weekly scan results
+**Security Issues:** office@nexusct.com  
+**General Support:** Refer to the main ClassifAI plugin repository  
+**Nexus Communications Technology:** https://nexusct.com
